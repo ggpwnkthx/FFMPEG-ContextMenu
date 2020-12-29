@@ -10,7 +10,6 @@ $defaults = @{
 $outputs = @{
     '960p' = @{
         'filter:v' = @{'scale' = '1920:960'}
-        'crf' = '24'
     }
     '2k'   = @{
         'filter:v' = @{'scale' = '2880:1440'}
@@ -170,7 +169,14 @@ function Download-GithubAsset {
     }
 }
 function Self-Upgrade ([string]$InputPath) {
-    
+    $current_publish = (New-TimeSpan -Start (Get-Date -Date "01/01/1970") -End (Get-ChildItem $PSCommandPath).LastWriteTime).TotalSeconds
+    $release = Get-GithubRelease -Repo ggpwnkthx/FFMPEG-ContextMenu -Latest
+    $release_publish = (New-TimeSpan -Start (Get-Date -Date "01/01/1970") -End (Get-Date -Date $release.published_at)).TotalSeconds
+    if ($release_publish -gt $current_publish) {
+        Copy-Item -Path ($release | Get-GithubAsset | Download-GithubAsset) -Destination $PSCommandPath -Force
+        & $PSCommandPath -InputPath $InputPath
+        exit
+    }
 }
 
 # Scoping
