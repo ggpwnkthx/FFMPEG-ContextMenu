@@ -309,10 +309,10 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
         foreach ( $master in $masters ) {
             $outpath = "$dir_processed\" + $master.BaseName + "_" + $key +".mp4"
             $full_expression = "ffmpeg -i '" + $master.FullName + "'" + $expression + " -n '$outpath'";
+            Write-Host $full_expression
             if(!(Test-Path $outpath)) {
                 Invoke-Expression ($full_expression);
             }
-            Write-Host $full_expression
         }
     }
 }
