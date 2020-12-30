@@ -258,16 +258,15 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
     Set-ItemProperty -Path $reg_context_ffmpeg_shell_all_command -Name "(Default)" -Value "PowerShell.exe -ExecutionPolicy Bypass -NoExit -Command `"& '$self_install_path' '%v'`""
     Write-Host -NoNewLine 'Installed successfully! ';
 } else {
-    Self-Upgrade
+    if ($InputPath -eq $null) {
+        $InputPath = Get-Folder
+    }
+    Self-Upgrade -InputPath $InputPath
 
     $ffmpeg_install_path = "$dir_scope\Files\ffmpeg"
     $ffmpeg_installed_versions = Get-ChildItem -Path $ffmpeg_install_path
     $ffmpeg_install_path += "\" + ($ffmpeg_installed_versions | Sort-Object -Property "LastWriteTime" -Descending)[0].Name + "\bin\ffmpeg.exe"
     Set-Alias ffmpeg $ffmpeg_install_path
-
-    if ($InputPath -eq $null) {
-        $InputPath = Get-Folder
-    }
 
     $masters = Get-ChildItem $InputPath | Where {$_.extension -like ".mp4"}
     $dir_processed = "$InputPath\Processed"
