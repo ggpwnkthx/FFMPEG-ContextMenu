@@ -1,29 +1,43 @@
-﻿param([string]$InputPath)
+param([string]$InputPath)
 
 $defaults = @{
 	'c:a'			= 'aac';
 	'b:a'			= '317k';
 	'aspect:v'		= '2';
-	'c:v'		    = 'libx264';
-    'crf'           = '20';
+    'movflags'      = '+faststart';
 };
 $outputs = @{
     '960p' = @{
+	    'c:v'	   = 'libx264';
+	    'crf'      = '23';
+        'coder'    = '0'
         'filter:v' = @{'scale' = '1920:960'}
+        'ac'       = '2'
     }
     '2k'   = @{
+	    'c:v'	   = 'libx264';
+	    'crf'      = '23';
+        'coder'    = '0'
         'filter:v' = @{'scale' = '2880:1440'}
+        'ac'       = '2'
     }
     '4k'   = @{
+	    'c:v'	   = 'libx264';
+	    'crf'      = '23';
+        'coder'    = '0'
         'filter:v' = @{'scale' = '3840:1920'}
     }
     '6k'   = @{
+        'c:v'      = 'libx265'
+	    'crf'      = '20';
         'filter:v' = @{'scale' = '5760:2880'}
-        'c:v' = 'libx265'
+        'preset'   = 'ultrafast'
     }
     '8k'   = @{
+        'c:v'      = 'libx265'
+	    'crf'      = '20';
         'filter:v' = @{'scale' = '7680:3840'}
-        'c:v' = 'libx265'
+        'preset'   = 'ultrafast'
     }
 }
 
