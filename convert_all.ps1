@@ -4,7 +4,7 @@ $defaults = @{
 	'c:a'			= 'aac';
 	'b:a'			= '317k';
 	'aspect:v'		= '2';
-    'movflags'      = '+faststart';
+	'movflags'      = '+faststart';
 };
 $outputs = @{
     '960p' = @{
@@ -193,6 +193,21 @@ function Self-Upgrade ([string]$InputPath) {
     }
 }
 
+Function Get-Folder($initialDirectory="") {
+    [System.Reflection.Assembly]::LoadWithPartialName("System.windows.forms") | Out-Null
+
+    $foldername = New-Object System.Windows.Forms.FolderBrowserDialog
+    $foldername.Description = "Select a folder"
+    $foldername.rootfolder = "MyComputer"
+    $foldername.SelectedPath = $initialDirectory
+
+    if($foldername.ShowDialog() -eq "OK")
+    {
+        $folder += $foldername.SelectedPath
+    }
+    return $folder
+}
+
 # Scoping
 $dir_scope = "$env:APPDATA\Eclatech"
 if(!(Test-Path $dir_scope)) {
@@ -282,10 +297,14 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
     $ffmpeg_install_path += "\" + ($ffmpeg_installed_versions | Sort-Object -Property "LastWriteTime" -Descending)[0].Name + "\bin\ffmpeg.exe"
     Set-Alias ffmpeg $ffmpeg_install_path
 
-    $masters = Get-ChildItem $InputPath | Where {$_.extension -like ".mp4"}
+    $masters = Get-ChildItem -Path $InputPath -Filter "*.mp4"
     $dir_processed = "$InputPath\Processed"
-    if(!(Test-Path $dir_processed)) {
-        New-Item -ItemType Directory -Force -Path $dir_processed | Out-Null
+    if($masters.Length -eq 0) {
+        $masters = Get-ChildItem -Path $InputPath -Recurse -Filter "*.mp4"
+        $dir_processed = Get-Folder -initialDirectory $InputPath
+        if ([string]::IsNullOrEmpty($dir_processed)) {
+            exit
+        }
     }
     foreach($key in $outputs.Keys) {
         $parameters = @{}
@@ -319,12 +338,27 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
 		    }
 	    }
 	
-        foreach ( $master in $masters ) {
-            $outpath = "$dir_processed\" + $master.BaseName + "_" + $key +".mp4"
-            $full_expression = "ffmpeg -i '" + $master.FullName + "'" + $expression + " -n '$outpath'";
-            Write-Host $full_expression
+        foreach ($master in $masters) {
+            if((Split-Path -Path $dir_processed -Parent) -ne ($InputPath)) {
+                $outpath = ([string](Split-Path -Path $master.FullName -Parent)).Replace($InputPath, $dir_processed)
+            } else {
+                $outpath = $dir_processed
+            }
+            Write-Host $outpath
             if(!(Test-Path $outpath)) {
-                Invoke-Expression ($full_expression);
+                New-Item -ItemType Directory -Force -Path $outpath | Out-Null
+            }
+            $outpath = $outpath + "\"  + $master.BaseName + "_" + $key + ".mp4"
+            $expression = "ffmpeg -i '" + $master.FullName + "'" + $expression;
+            Write-Host $expression
+            if(!(Test-Path $outpath)) {
+                Invoke-Expression ($expression + " -n '$outpath'");
+            } else {
+                $original = Get-FileMetaData $master.FullName
+                $transcoded = Get-FileMetaData $outpath
+                if ($original.Length -ne $transcoded.Length) {
+                    Invoke-Expression ($expression + " -y '$outpath'");
+                }
             }
         }
     }
