@@ -355,15 +355,16 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
                 New-Item -ItemType Directory -Force -Path $outpath | Out-Null
             }
             $outpath = $outpath + "\"  + $master.BaseName + "_" + $key + ".mp4"
-            $expression = "ffmpeg -i '" + $master.FullName + "'" + $expression;
-            Write-Host $expression
+            $command = "ffmpeg -i '" + $master.FullName + "'" + $expression;
+            Write-Host 
+            Write-Host $command
             if(!(Test-Path $outpath)) {
-                Invoke-Expression ($expression + " -n '$outpath'");
+                Invoke-Expression ($command + " -n '$outpath'");
             } else {
                 $original = Get-FileMetaData $master.FullName
                 $transcoded = Get-FileMetaData $outpath
                 if ($original.Length -ne $transcoded.Length) {
-                    Invoke-Expression ($expression + " -y '$outpath'");
+                    Invoke-Expression ($command + " -y '$outpath'");
                 }
             }
         }
