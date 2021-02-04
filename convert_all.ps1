@@ -278,6 +278,12 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
     if(!(Test-Path $reg_context_ffmpeg)) {
         New-Item -Path $reg_context_ffmpeg | Out-Null
     }
+    if(!(Get-ItemProperty -Path $reg_context_ffmpeg).PSObject.Properties.Name -contains "SubCommands") {
+        New-ItemProperty -Path $reg_context_ffmpeg -Name "SubCommands" -Value ""
+    }
+    if(!(Get-ItemProperty -Path $reg_context_ffmpeg).PSObject.Properties.Name -contains "MUIVerb") {
+        New-ItemProperty -Path $reg_context_ffmpeg -Name "MUIVerb" -Value "FFMPEG"
+    }
     $reg_context_ffmpeg_shell = "$reg_context_ffmpeg\shell"
     if(!(Test-Path $reg_context_ffmpeg_shell)) {
         New-Item -Path $reg_context_ffmpeg_shell | Out-Null
@@ -286,12 +292,15 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
     if(!(Test-Path $reg_context_ffmpeg_shell_all)) {
         New-Item -Path $reg_context_ffmpeg_shell_all | Out-Null
     }
+    if(!(Get-ItemProperty -Path $reg_context_ffmpeg_shell_all).PSObject.Properties.Name -contains "MUIVerb") {
+        New-ItemProperty -Path $reg_context_ffmpeg_shell_all -Name "MUIVerb" -Value "Convert All MP4s"
+    }
     $reg_context_ffmpeg_shell_all_command = "$reg_context_ffmpeg_shell_all\command"
     if(!(Test-Path $reg_context_ffmpeg_shell_all_command)) {
         New-Item -Path $reg_context_ffmpeg_shell_all_command | Out-Null
     }
     Set-ItemProperty -Path $reg_context_ffmpeg_shell_all_command -Name "(Default)" -Value "PowerShell.exe -ExecutionPolicy Bypass -NoExit -Command `"& '$self_install_path' '%v'`""
-    Write-Host -NoNewLine 'Installed successfully! ';
+    Write-Host -NoNewLine 'Installed successfully!';
 } else {
     if ($InputPath -eq $null) {
         $InputPath = Get-Folder
