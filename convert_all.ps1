@@ -321,60 +321,64 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
             exit
         }
     }
-    foreach($key in $outputs.Keys) {
-        $parameters = @{}
-	    foreach($attr in $defaults.Keys) {
-		    $parameters[$attr] = $defaults[$attr]
-	    }
-	    foreach($attr in $outputs[$key].Keys) {
-		    $parameters[$attr] = $outputs[$key][$attr]
-	    }
-        $expression = '';
-	    foreach($para in $parameters.Keys) {
-		    if($parameters[$para] -is [String]){
-			    $expression += " -"+$para+" "+$parameters[$para];
-		    }
-		    if($parameters[$para] -is [Hashtable]){
-			    $expression += " -"+$para+" '";
-			    foreach($item in $parameters[$para].Keys){
-                    if ($parameters[$para][$item] -ne '') {
-				        $expression += $item+"="+$parameters[$para][$item];
-                    } else {
-                        $expression += $item;
-                    }
-                    Switch ($para) {
-                        'filter:v' { $expression += "," }
-                        'x264-params' { $expression += ":" }
-                        'x265-params' { $expression += ":" }
-                    }
-			    }
-			    $expression = $expression.Substring(0,$expression.Length-1)
-			    $expression += "'"
-		    }
-	    }
-	
-        foreach ($master in $masters) {
-            if((Split-Path -Path $dir_processed -Parent) -ne ($InputPath)) {
-                $outpath = ([string](Split-Path -Path $master.FullName -Parent)).Replace($InputPath, $dir_processed)
-            } else {
-                $outpath = $dir_processed
-            }
-            Write-Host $outpath
-            if(!(Test-Path $outpath)) {
-                New-Item -ItemType Directory -Force -Path $outpath | Out-Null
-            }
-            $outpath = $outpath + "\"  + $master.BaseName + "_" + $key + ".mp4"
-            $command = "ffmpeg -i '" + $master.FullName + "'" + $expression;
-            Write-Host 
-            Write-Host $command
-            if(!(Test-Path $outpath)) {
-                Invoke-Expression ($command + " -n '$outpath'");
+    
+    foreach ($master in $masters) {
+        if((Split-Path -Path $dir_processed -Parent) -ne ($InputPath)) {
+            $outpath = ([string](Split-Path -Path $master.FullName -Parent)).Replace($InputPath, $dir_processed)
+        } else {
+            $outpath = $dir_processed
+        }
+        if(!(Test-Path $outpath)) {
+            New-Item -ItemType Directory -Force -Path $outpath | Out-Null
+        }
+        foreach($key in ($outputs.Keys | Sort)) {
+            $parameters = @{}
+	        foreach($attr in $defaults.Keys) {
+		        $parameters[$attr] = $defaults[$attr]
+	        }
+	        foreach($attr in $outputs[$key].Keys) {
+		        $parameters[$attr] = $outputs[$key][$attr]
+	        }
+            $expression = "ffmpeg -i '" + $master.FullName + "'";
+	        foreach($para in $parameters.Keys) {
+		        if($parameters[$para] -is [String]){
+			        $expression += " -"+$para+" "+$parameters[$para];
+		        }
+		        if($parameters[$para] -is [Hashtable]){
+			        $expression += " -"+$para+" '";
+			        foreach($item in $parameters[$para].Keys){
+                        if ($parameters[$para][$item] -ne '') {
+				            $expression += $item+"="+$parameters[$para][$item];
+                        } else {
+                            $expression += $item;
+                        }
+                        Switch ($para) {
+                            'filter:v' { $expression += "," }
+                            'x264-params' { $expression += ":" }
+                            'x265-params' { $expression += ":" }
+                        }
+			        }
+			        $expression = $expression.Substring(0,$expression.Length-1)
+			        $expression += "'"
+		        }
+	        }
+            $output_filepath = $outpath + "\"  + $master.BaseName + "_" + $key + ".mp4"
+            if(!(Test-Path $output_filepath)) {
+                $expression += " -n '$output_filepath'"
             } else {
                 $original = Get-FileMetaData $master.FullName
-                $transcoded = Get-FileMetaData $outpath
+                $transcoded = Get-FileMetaData $output_filepath
                 if ($original.Length -ne $transcoded.Length) {
-                    Invoke-Expression ($command + " -y '$outpath'");
+                    $expression += " -y '$output_filepath'"
+                } else {
+                    $expression = ""
                 }
+            }
+            if (-not [string]::IsNullOrEmpty($expression)) {
+                Write-Host $expression
+                Invoke-Expression ($expression)
+            } else {
+                Write-Host "No FFMPEG expression."
             }
         }
     }
