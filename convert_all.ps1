@@ -321,6 +321,10 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
             exit
         }
     }
+
+    $wshell = New-Object -ComObject Wscript.Shell
+    $NVENC = $wshell.Popup("Do you want to enable NVENC?",0,"Alert",64+4)
+    write-Host $NVENC
     
     foreach ($master in $masters) {
         if((Split-Path -Path $dir_processed -Parent) -ne ($InputPath)) {
@@ -339,7 +343,19 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
 	        foreach($attr in $outputs[$key].Keys) {
 		        $parameters[$attr] = $outputs[$key][$attr]
 	        }
-            $expression = "ffmpeg -i '" + $master.FullName + "'";
+
+            $expression = "ffmpeg "
+            if ($NVENC -eq 6) {
+                $expression += "-hwaccel auto "
+                if ($parameters["c:v"] -eq "libx264") {
+                    $parameters["c:v"] = "h264_nvenc"
+                }
+                if ($parameters["c:v"] -eq "libx265") {
+                    $parameters["c:v"] = "hevc_nvenc"
+                }
+            }
+            $expression += "-i '" + $master.FullName + "'";
+
 	        foreach($para in $parameters.Keys) {
 		        if($parameters[$para] -is [String]){
 			        $expression += " -"+$para+" "+$parameters[$para];
