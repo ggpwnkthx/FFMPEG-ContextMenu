@@ -387,8 +387,11 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
                     }
                 }
                 if ($parameters.Keys -match "crf") {
-                    $parameters["cq:v"] = $parameters["crf"]
-                    $parameters["rc:v"] = "vbr"
+                    $parameters["cq"] = $parameters["crf"]
+                    $parameters["qmin"] = $parameters["crf"]
+                    $parameters["qmax"] = $parameters["crf"]
+                    $parameters["b:v"] = "0"
+                    $parameters["rc"] = "vbr"
                     $parameters.Remove("crf")
                 }
             }
