@@ -353,6 +353,40 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
                 if ($parameters["c:v"] -eq "libx265") {
                     $parameters["c:v"] = "hevc_nvenc"
                 }
+                if ($parameters.PSobject.Properties.name -match "preset") {
+                    switch($parameters["preset"]) {
+                        "ultrafast" {
+                            $parameters["preset"] = "fast"
+                        }
+                        "superfast" {
+                            $parameters["preset"] = "fast"
+                        }
+                        "veryfast" {
+                            $parameters["preset"] = "fast"
+                        }
+                        "faster" {
+                            $parameters["preset"] = "fast"
+                        }
+                        "fast" {
+                            $parameters["preset"] = "fast"
+                        }
+                        "medium" {
+                            $parameters["preset"] = "medium"
+                        }
+                        "slow" {
+                            $parameters["preset"] = "slow"
+                        }
+                        "slower" {
+                            $parameters["preset"] = "lossless"
+                        }
+                        "veryslow" {
+                            $parameters["preset"] = "losslesshp"
+                        }
+                        default {
+                            $parameters["preset"] = "default"
+                        }
+                    }
+                }
             }
             $expression += "-i '" + $master.FullName + "'";
 
