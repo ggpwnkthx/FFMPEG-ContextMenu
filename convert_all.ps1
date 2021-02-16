@@ -387,6 +387,7 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
                     }
                 }
                 if ($parameters.Keys -match "crf") {
+                    $parameters["crf"] = [string]([int]$parameters["crf"] + 4)
                     $parameters["cq"] = $parameters["crf"]
                     $parameters["qmin"] = $parameters["crf"]
                     $parameters["qmax"] = $parameters["crf"]
