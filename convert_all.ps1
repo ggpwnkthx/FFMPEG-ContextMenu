@@ -324,7 +324,6 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
 
     $wshell = New-Object -ComObject Wscript.Shell
     $NVENC = $wshell.Popup("Do you want to enable NVENC?",0,"Alert",64+4)
-    write-Host $NVENC
     
     foreach ($master in $masters) {
         if((Split-Path -Path $dir_processed -Parent) -ne ($InputPath)) {
@@ -353,7 +352,7 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
                 if ($parameters["c:v"] -eq "libx265") {
                     $parameters["c:v"] = "hevc_nvenc"
                 }
-                if ($parameters.PSobject.Properties.name -match "preset") {
+                if ($parameters.Keys -match "preset") {
                     switch($parameters["preset"]) {
                         "ultrafast" {
                             $parameters["preset"] = "fast"
@@ -387,6 +386,11 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
                         }
                     }
                 }
+                if ($parameters.Keys -match "crf") {
+                    $parameters["cq:v"] = $parameters["crf"]
+                    $parameters["rc:v"] = "vbr"
+                    $parameters.Remove("crf")
+                }
             }
             $expression += "-i '" + $master.FullName + "'";
 
@@ -416,6 +420,7 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
             if(!(Test-Path $output_filepath)) {
                 $expression += " -n '$output_filepath'"
             } else {
+                Write-Host "$output_filepath already exists. Checking length for consistency."
                 $original = Get-FileMetaData $master.FullName
                 $transcoded = Get-FileMetaData $output_filepath
                 if ($original.Length -ne $transcoded.Length) {
