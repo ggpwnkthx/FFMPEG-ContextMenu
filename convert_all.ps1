@@ -187,6 +187,7 @@ function Self-Upgrade ([string]$InputPath) {
     $release = Get-GithubRelease -Repo ggpwnkthx/FFMPEG-ContextMenu -Latest
     $release_publish = (New-TimeSpan -Start (Get-Date -Date "01/01/1970") -End (Get-Date -Date $release.published_at)).TotalSeconds
     if ($release_publish -gt $current_publish) {
+        Write-Host "Performing self-update..."
         Copy-Item -Path ($release | Get-GithubAsset | Download-GithubAsset) -Destination $PSCommandPath -Force
         & $PSCommandPath -InputPath $InputPath
         exit
@@ -206,6 +207,38 @@ Function Get-Folder($initialDirectory="") {
         $folder += $foldername.SelectedPath
     }
     return $folder
+}
+
+Function Analyze-FFMPEG-StdOut($stdout) {
+    $output = New-Object PSObject
+    $output | Add-Member -MemberType NoteProperty -Name Frame -Value ([string]([regex]::Match($stdout,'frame=\s*(\d+)')))
+    if($output.Frame.Length -gt 0) {
+        $output.Frame = [int]($output.Frame.Substring(6,$output.Frame.Length - 6).Trim())
+    }
+    $output | Add-Member -MemberType NoteProperty -Name FPS -Value ([string]([regex]::Match($stdout,'fps=\s*(\d+)')))
+    if($output.FPS.Length -gt 0) {
+        $output.FPS = $output.FPS.Substring(4,$output.FPS.Length - 4).Trim()
+    }
+    $output | Add-Member -MemberType NoteProperty -Name Size -Value ([string]([regex]::Match($stdout,'size=\s*(\d+).*?\s')))
+    if($output.Size.Length -gt 0) {
+        $output.Size = $output.Size.Substring(5,$output.Size.Length - 5).Trim()
+    }
+    $output | Add-Member -MemberType NoteProperty -Name Time -Value ([string]([regex]::Match($stdout,'time=(\d+):(\d+):(\d+)')))
+    if($output.Time.Length -gt 0) {
+        $output.Time = $output.Time.Substring(5,$output.Time.Length - 5)
+    }
+    $output | Add-Member -MemberType NoteProperty -Name Bitrate -Value ([string]([regex]::Match($stdout,'bitrate=\s*(\d+).*?\s')))
+    if($output.Bitrate.Length -gt 0) {
+        $output.Bitrate = $output.Bitrate.Substring(8,$output.Bitrate.Length - 8).Trim()
+    }
+    $output | Add-Member -MemberType NoteProperty -Name Speed -Value ([string]([regex]::Match($stdout,'speed=.*?\s')))
+    if($output.Speed.Length -gt 0) {
+        $output.Speed = $output.Speed.Substring(6,$output.Speed.Length - 6).Trim()
+        if($output.Speed.Length -gt 0) {
+            $output.Speed = [decimal]$output.Speed.Substring(0,$output.Speed.Length - 1)
+        }
+    }
+    return $output
 }
 
 # Scoping
@@ -309,8 +342,10 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
 
     $ffmpeg_install_path = "$dir_scope\Files\ffmpeg"
     $ffmpeg_installed_versions = Get-ChildItem -Path $ffmpeg_install_path
+    $ffprobe_install_path = $ffmpeg_install_path + "\" + ($ffmpeg_installed_versions | Sort-Object -Property "LastWriteTime" -Descending)[0].Name + "\bin\ffprobe.exe"
     $ffmpeg_install_path += "\" + ($ffmpeg_installed_versions | Sort-Object -Property "LastWriteTime" -Descending)[0].Name + "\bin\ffmpeg.exe"
     Set-Alias ffmpeg $ffmpeg_install_path
+    Set-Alias ffprobe $ffprobe_install_path
 
     $masters = Get-ChildItem -Path $InputPath -Filter "*.mp4"
     $dir_processed = "$InputPath\Processed"
@@ -324,8 +359,14 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
 
     $wshell = New-Object -ComObject Wscript.Shell
     $NVENC = $wshell.Popup("Do you want to enable NVENC?",0,"Alert",64+4)
-    
+    if ($NVENC -eq 6) {
+        $GPU_LIST = ffmpeg -f lavfi -i nullsrc -c:v nvenc -gpu list -f null - 2>&1 | Select-String "GPU \#" | Foreach { [regex]::Matches([string]$_,"\#.*\>").Value }
+    }
+    $queue = [System.Collections.Queue]::Synchronized( (New-Object System.Collections.Queue) )
+    $i = 0
     foreach ($master in $masters) {
+        $master | Add-Member -MemberType NoteProperty -Name streams -Value ((ffprobe -hide_banner -show_streams -v quiet -print_format json -i $master.FullName | ConvertFrom-Json).streams)
+        
         if((Split-Path -Path $dir_processed -Parent) -ne ($InputPath)) {
             $outpath = ([string](Split-Path -Path $master.FullName -Parent)).Replace($InputPath, $dir_processed)
         } else {
@@ -335,6 +376,15 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
             New-Item -ItemType Directory -Force -Path $outpath | Out-Null
         }
         foreach($key in ($outputs.Keys | Sort)) {
+            $job = New-Object -TypeName PSObject -Property @{
+                Id = $i
+                PrefixExpression = ""
+                InputExpression = ""
+                OutputExpression = ""
+                InputStreams = $master.streams
+                OutputFilePath = ""
+            }
+            $i++
             $parameters = @{}
 	        foreach($attr in $defaults.Keys) {
 		        $parameters[$attr] = $defaults[$attr]
@@ -342,44 +392,62 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
 	        foreach($attr in $outputs[$key].Keys) {
 		        $parameters[$attr] = $outputs[$key][$attr]
 	        }
-
-            $expression = "ffmpeg "
+            $job.PrefixExpression += "-hide_banner "
             if ($NVENC -eq 6) {
-                $expression += "-hwaccel auto "
+                $job.PrefixExpression += "-hwaccel cuda -hwaccel_output_format cuda "
+                switch ($master.streams[0].codec_name) {
+                    hevc { $job.InputExpression += "-c:v hevc_cuvid " }
+                    h264 { $job.InputExpression += "-c:v h264_cuvid " }
+                }
+                if ($parameters.Keys -match "filter:v") {
+                    if ($parameters["filter:v"].Keys -match "scale") {
+                        $parameters["filter:v"]["scale_cuda"] = $parameters["filter:v"]["scale"]
+                        $parameters["filter:v"].Remove("scale")
+                    }
+                    if($parameters["filter:v"].Keys.Count -eq 0) {
+                        $parameters.Remove("filter:v")
+                    }
+                }
                 if ($parameters["c:v"] -eq "libx264") {
                     $parameters["c:v"] = "h264_nvenc"
+                    if ($parameters.Keys -match "crf") {
+                        $parameters["crf"] = [string]([int]$parameters["crf"] + 4)
+                    }
                 }
                 if ($parameters["c:v"] -eq "libx265") {
                     $parameters["c:v"] = "hevc_nvenc"
+                    if ($parameters.Keys -match "crf") {
+                        $parameters["crf"] = [string]([int]$parameters["crf"] + 11)
+                    }
                 }
                 if ($parameters.Keys -match "preset") {
                     switch($parameters["preset"]) {
                         "ultrafast" {
-                            $parameters["preset"] = "fast"
+                            $parameters["preset"] = "p1"
                         }
                         "superfast" {
-                            $parameters["preset"] = "fast"
+                            $parameters["preset"] = "p1"
                         }
                         "veryfast" {
-                            $parameters["preset"] = "fast"
+                            $parameters["preset"] = "p1"
                         }
                         "faster" {
-                            $parameters["preset"] = "fast"
+                            $parameters["preset"] = "p2"
                         }
                         "fast" {
-                            $parameters["preset"] = "fast"
+                            $parameters["preset"] = "p3"
                         }
                         "medium" {
-                            $parameters["preset"] = "medium"
+                            $parameters["preset"] = "p4"
                         }
                         "slow" {
-                            $parameters["preset"] = "slow"
+                            $parameters["preset"] = "p5"
                         }
                         "slower" {
-                            $parameters["preset"] = "lossless"
+                            $parameters["preset"] = "p6"
                         }
                         "veryslow" {
-                            $parameters["preset"] = "losslesshp"
+                            $parameters["preset"] = "p7"
                         }
                         default {
                             $parameters["preset"] = "default"
@@ -387,58 +455,84 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
                     }
                 }
                 if ($parameters.Keys -match "crf") {
-                    $parameters["crf"] = [string]([int]$parameters["crf"] + 4)
                     $parameters["cq"] = $parameters["crf"]
                     $parameters["qmin"] = $parameters["crf"]
                     $parameters["qmax"] = $parameters["crf"]
                     $parameters["b:v"] = "0"
                     $parameters["rc"] = "vbr"
+                    $parameters["bf:v"] = "3"
                     $parameters.Remove("crf")
                 }
             }
-            $expression += "-i '" + $master.FullName + "'";
+            
+            $job.InputExpression += "-i '" + $master.FullName + "'"
 
+            $output_expression = ""
 	        foreach($para in $parameters.Keys) {
 		        if($parameters[$para] -is [String]){
-			        $expression += " -"+$para+" "+$parameters[$para];
+			        $output_expression += " -"+$para+" "+$parameters[$para]
 		        }
 		        if($parameters[$para] -is [Hashtable]){
-			        $expression += " -"+$para+" '";
+			        $output_expression += " -"+$para+" '";
 			        foreach($item in $parameters[$para].Keys){
                         if ($parameters[$para][$item] -ne '') {
-				            $expression += $item+"="+$parameters[$para][$item];
+				            $output_expression += $item+"="+$parameters[$para][$item];
                         } else {
-                            $expression += $item;
+                            $output_expression += $item;
                         }
                         Switch ($para) {
-                            'filter:v' { $expression += "," }
-                            'x264-params' { $expression += ":" }
-                            'x265-params' { $expression += ":" }
+                            'filter:v' { $output_expression += "," }
+                            'x264-params' { $output_expression += ":" }
+                            'x265-params' { $output_expression += ":" }
                         }
 			        }
-			        $expression = $expression.Substring(0,$expression.Length-1)
-			        $expression += "'"
+			        $output_expression = $output_expression.Substring(0,$output_expression.Length-1)
+			        $output_expression += "'"
 		        }
 	        }
             $output_filepath = $outpath + "\"  + $master.BaseName + "_" + $key + ".mp4"
+            $job.OutputFilePath = $output_filepath
             if(!(Test-Path $output_filepath)) {
-                $expression += " -n '$output_filepath'"
+                $output_expression += " -n '$output_filepath'"
             } else {
-                Write-Host "$output_filepath already exists. Checking length for consistency."
-                $original = Get-FileMetaData $master.FullName
-                $transcoded = Get-FileMetaData $output_filepath
-                if ($original.Length -ne $transcoded.Length) {
-                    $expression += " -y '$output_filepath'"
+                $transcoded = (ffprobe -hide_banner -show_streams -v quiet -print_format json -i  $output_filepath | ConvertFrom-Json).streams
+                if ($transcoded.Length -gt 0) {
+                    if ($master.streams[0].duration -ne $transcoded[0].duration) {
+                        $output_expression += " -y '$output_filepath'"
+                    } else {
+                        $output_expression = ""
+                    }
                 } else {
-                    $expression = ""
+                    $output_expression += " -y '$output_filepath'"
                 }
             }
-            if (-not [string]::IsNullOrEmpty($expression)) {
-                Write-Host $expression
-                Invoke-Expression ($expression)
-            } else {
-                Write-Host "No FFMPEG expression."
+            if (-not [string]::IsNullOrEmpty($output_expression)) {
+                $job.OutputExpression = $output_expression
+                $queue.Enqueue($job)
             }
+        }
+    }
+    $batch = $queue.ToArray()
+    While($queue.Count -gt 0 -or (Get-Job | Where -Property State -EQ 'Running').Count -gt 0) {
+        if ($queue.Count -gt 0 -and (Get-Job | Where -Property State -EQ 'Running').Count -lt 3) {
+            $data = $queue.Dequeue()
+            $job = Start-Job -ArgumentList @($ffmpeg_install_path, $data) -ScriptBlock {
+                Set-Alias ffmpeg $arg[0]
+                Invoke-Expression("ffmpeg "+$args[1].PrefixExpression+" "+$args[1].InputExpression+" "+$args[1].OutputExpression)
+            }
+            $batch | Where -Property Id -EQ $data.Id | Add-Member -MemberType NoteProperty -Name JobId -Value $job.Id
+        }
+        Get-Job | Where -Property State -EQ 'Running' | Foreach {
+            $stdout = (Receive-Job -Job $_ 2>&1)
+            if (-not [string]::IsNullOrEmpty($stdout)) {
+                $data = $batch | Where -Property JobID -EQ $_.Id
+                $progress = Analyze-FFMPEG-StdOut($stdout)
+                Write-Progress -Activity $data.OutputFilePath -Status ("Frame: "+$progress.Frame+"/"+$data.InputStreams[0].nb_frames+" | FPS: "+$progress.FPS+" | Size: "+$progress.Size+" | Bitrate: "+$progress.Bitrate+" | Speed: "+$progress.Speed+"x") -PercentComplete (($progress.Frames / [int]$data.InputStreams[0].nb_frames) * 100) -Id $data.Id
+            }
+        }
+        Get-Job | Where -Property State -EQ 'Completed' | Foreach {
+            $data = $batch | Where -Property JobID -EQ $_.Id
+            Write-Progress -Activity $data.OutputFilePath -Completed
         }
     }
 }
