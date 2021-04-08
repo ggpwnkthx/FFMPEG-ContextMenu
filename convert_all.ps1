@@ -14,42 +14,42 @@ $defaults = @{
 };
 $outputs = @{
     '1k' = @{
-        'c:v'       = 'libx264';
-        'crf'       = '23';
-        'coder'     = '0'
-        'filter:v'  = @{'scale' = '1920:960' }
-        'ac'        = '2'
+        'c:v'      = 'libx264';
+        'crf'      = '23';
+        'coder'    = '0'
+        'filter:v' = @{'scale' = '1920:960' }
+        'ac'       = '2'
     }
     '2k' = @{
-        'c:v'       = 'libx264';
-        'crf'       = '23';
-        'coder'     = '0'
-        'filter:v'  = @{'scale' = '2880:1440' }
-        'ac'        = '2'
+        'c:v'      = 'libx264';
+        'crf'      = '23';
+        'coder'    = '0'
+        'filter:v' = @{'scale' = '2880:1440' }
+        'ac'       = '2'
     }
     '4k' = @{
-        'c:v'       = 'libx264';
-        'crf'       = '23';
-        'coder'     = '0'
-        'filter:v'  = @{'scale' = '3840:1920' }
+        'c:v'      = 'libx264';
+        'crf'      = '23';
+        'coder'    = '0'
+        'filter:v' = @{'scale' = '3840:1920' }
     }
     '6k' = @{
-        'c:v'       = 'libx265'
-        'crf'       = '20';
-        'filter:v'  = @{'scale' = '5760:2880' }
-        'preset'    = 'ultrafast'
+        'c:v'      = 'libx265'
+        'crf'      = '20';
+        'filter:v' = @{'scale' = '5760:2880' }
+        'preset'   = 'ultrafast'
     }
     '8k' = @{
-        'c:v'       = 'libx265'
-        'crf'       = '20';
-        'filter:v'  = @{'scale' = '7680:3840' }
-        'preset'    = 'ultrafast'
+        'c:v'      = 'libx265'
+        'crf'      = '20';
+        'filter:v' = @{'scale' = '7680:3840' }
+        'preset'   = 'ultrafast'
     }
 }
 if ($NVENC) {
     $Auto = $true
     $outputs['1K']['c:v'] = 'h264_nvenc'
-    $outputs['1K']['cq'] = [string]([int]$outputs['1K']['crf'] + 6)
+    $outputs['1K']['cq'] = [string]([int]$outputs['1K']['crf'] + 5)
     $outputs['1K'].Remove('crf')
     $outputs['1K']['qmin'] = $outputs['1K']['cq']
     $outputs['1K']['qmax'] = $outputs['1K']['cq']
@@ -59,23 +59,23 @@ if ($NVENC) {
     $outputs['1K']['filter:v'].Remove('scale')
 
     $outputs['2K']['c:v'] = 'h264_nvenc'
-    $outputs['2K']['cq'] = [string]([int]$outputs['2K']['crf'] + 6)
+    $outputs['2K']['cq'] = [string]([int]$outputs['2K']['crf'] + 5)
     $outputs['2K'].Remove('crf')
     $outputs['2K']['qmin'] = $outputs['2K']['cq']
     $outputs['2K']['qmax'] = $outputs['2K']['cq']
-    $outputs['2K']['maxrate'] ='12M'
-    $outputs['2K']['bufsize'] ='6M'
+    $outputs['2K']['maxrate'] = '12M'
+    $outputs['2K']['bufsize'] = '6M'
     $outputs['2K']['filter:v']['scale_cuda'] = $outputs['2K']['filter:v']['scale']
     $outputs['2K']['filter:v'].Remove('scale')
 }
 if ($Auto) {   
     $outputs['4K']['c:v'] = 'h264_nvenc'
-    $outputs['4K']['cq'] = [string]([int]$outputs['4K']['crf'] + 6)
+    $outputs['4K']['cq'] = [string]([int]$outputs['4K']['crf'] + 5)
     $outputs['4K']['filter:v'].Remove('crf')
     $outputs['4K']['qmin'] = $outputs['4K']['cq']
     $outputs['4K']['qmax'] = $outputs['4K']['cq']
-    $outputs['4K']['maxrate'] ='16M'
-    $outputs['4K']['bufsize'] ='8M'
+    $outputs['4K']['maxrate'] = '16M'
+    $outputs['4K']['bufsize'] = '8M'
     $outputs['4K']['filter:v']['scale_cuda'] = $outputs['4K']['filter:v']['scale']
     $outputs['4K']['filter:v'].Remove('crf')
     $outputs['4K']['filter:v'].Remove('scale')
@@ -85,8 +85,8 @@ if ($Auto) {
     $outputs['6K'].Remove('crf')
     $outputs['6K']['qmin'] = $outputs['6K']['cq']
     $outputs['6K']['qmax'] = $outputs['6K']['cq']
-    $outputs['6K']['maxrate'] ='20M'
-    $outputs['6K']['bufsize'] ='10M'
+    $outputs['6K']['maxrate'] = '20M'
+    $outputs['6K']['bufsize'] = '10M'
     $outputs['6K']['filter:v']['scale_cuda'] = $outputs['6K']['filter:v']['scale']
     $outputs['6K']['filter:v'].Remove('scale')
     $outputs['6K'].Remove('preset')
@@ -96,8 +96,8 @@ if ($Auto) {
     $outputs['8K'].Remove('crf')
     $outputs['8K']['qmin'] = $outputs['8K']['cq']
     $outputs['8K']['qmax'] = $outputs['8K']['cq']
-    $outputs['8K']['maxrate'] ='24M'
-    $outputs['8K']['bufsize'] ='12M'
+    $outputs['8K']['maxrate'] = '24M'
+    $outputs['8K']['bufsize'] = '12M'
     $outputs['8K']['filter:v']['scale_cuda'] = $outputs['8K']['filter:v']['scale']
     $outputs['8K']['filter:v'].Remove('scale')
     $outputs['8K'].Remove('preset')
@@ -566,7 +566,8 @@ else {
                 $job.OutputExpression = $output_expression
                 if ($parameters['c:v'] -eq "hevc_nvenc" -or $parameters['c:v'] -eq "h264_nvenc") {
                     $queue_NVENC.Enqueue($job)
-                } else {
+                }
+                else {
                     $queue_CPU.Enqueue($job)
                 }
             }
@@ -607,11 +608,12 @@ else {
                 $stdout = (Receive-Job -Job $_ 2>&1)
                 if (-not [string]::IsNullOrEmpty($stdout)) {
                     $data.Progress = Analyze-FFMPEG-StdOut($stdout)
-                    $completed = [math]::Round(([decimal]$data.Progress.Frame/[decimal]$data.InputStreams[0].nb_frames)*100,2)
-                    $speed = [math]::Round([decimal]$data.Progress.FPS/(Invoke-Expression $data.InputStreams[0].avg_frame_rate),2)
+                    $completed = [math]::Round(([decimal]$data.Progress.Frame / [decimal]$data.InputStreams[0].nb_frames) * 100, 2)
+                    $speed = [math]::Round([decimal]$data.Progress.FPS / (Invoke-Expression $data.InputStreams[0].avg_frame_rate), 2)
                     if ([int]$data.Progress.FPS -gt 0) {
-                        $RemainingTime = [timespan]::FromSeconds(([int]$data.InputStreams[0].nb_frames - [int]$data.Progress.Frame)/[int]$data.Progress.FPS)
-                    } else {
+                        $RemainingTime = [timespan]::FromSeconds(([int]$data.InputStreams[0].nb_frames - [int]$data.Progress.Frame) / [int]$data.Progress.FPS)
+                    }
+                    else {
                         $RemainingTime = [timespan]::FromSeconds(0)
                     }
                     $activity = $_.ProcessorType + ": " + $data.OutputFilePath
@@ -624,7 +626,7 @@ else {
                             " | Bitrate: " + $data.Progress.Bitrate + `
                             " | Speed: " + $speed + "x" + `
                             " | Remaining: " + ("{0:hh\:mm\:ss\,fff}" -f $RemainingTime) `
-                        ) `
+                    ) `
                         -PercentComplete $completed `
                         -Id ($data.Id + 2) `
                         -ParentId 1
@@ -642,7 +644,7 @@ else {
             -Status ( `
                 "Frame: $CompletedFrames / $TotalFrames | " + `
                 "FPS: $TotalFPS"`
-            ) `
+        ) `
             -PercentComplete (($CompletedFrames / $TotalFrames) * 100) `
             -Id 1
     }
