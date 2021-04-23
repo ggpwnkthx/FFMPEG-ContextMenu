@@ -3,8 +3,19 @@ param(
     [switch]$Auto = $false,
     [switch]$NVENC = $false
 )
-$ConcurrentJobCount_NVENC = 1
-$ConcurrentJobCount_CPU = 2
+$ConcurrentJobCount_CPU = 1
+$CPU_ENABLED = $true
+if ($Auto) {
+    $GPU_LIST = ffmpeg -f lavfi -i nullsrc -c:v nvenc -gpu list -f null - 2>&1 | Select-String "GPU \#" | ForEach-Object { [regex]::Matches([string]$_, "\#.*\>").Value }
+    if ($GPU_LIST.Count -gt 0) {
+        $NVENC_ENABLED = $true
+    }
+    $ConcurrentJobCount_NVENC = $GPU_LIST.Count
+}
+if ($NVENC) {
+    $CPU_ENABLED = $false
+    $NVENC_ENABLED = $true
+}
 
 $defaults = @{
     'c:a'      = 'aac';
@@ -13,20 +24,6 @@ $defaults = @{
     'movflags' = '+faststart';
 };
 $outputs = @{
-    '1k' = @{
-        'c:v'      = 'libx264';
-        'crf'      = '23';
-        'coder'    = '0'
-        'filter:v' = @{'scale' = '1920:960' }
-        'ac'       = '2'
-    }
-    '2k' = @{
-        'c:v'      = 'libx264';
-        'crf'      = '23';
-        'coder'    = '0'
-        'filter:v' = @{'scale' = '2880:1440' }
-        'ac'       = '2'
-    }
     '4k' = @{
         'c:v'      = 'libx264';
         'crf'      = '23';
@@ -37,70 +34,12 @@ $outputs = @{
         'c:v'      = 'libx265'
         'crf'      = '20';
         'filter:v' = @{'scale' = '5760:2880' }
-        'preset'   = 'ultrafast'
     }
     '8k' = @{
         'c:v'      = 'libx265'
         'crf'      = '20';
         'filter:v' = @{'scale' = '7680:3840' }
-        'preset'   = 'ultrafast'
     }
-}
-if ($NVENC) {
-    $Auto = $true
-    $outputs['1K']['c:v'] = 'h264_nvenc'
-    $outputs['1K']['cq'] = [string]([int]$outputs['1K']['crf'] + 5)
-    $outputs['1K'].Remove('crf')
-    $outputs['1K']['qmin'] = $outputs['1K']['cq']
-    $outputs['1K']['qmax'] = $outputs['1K']['cq']
-    $outputs['1K']['maxrate'] = '4.5M'
-    $outputs['1K']['bufsize'] = '2.25M'
-    $outputs['1K']['filter:v']['scale_cuda'] = $outputs['1K']['filter:v']['scale']
-    $outputs['1K']['filter:v'].Remove('scale')
-
-    $outputs['2K']['c:v'] = 'h264_nvenc'
-    $outputs['2K']['cq'] = [string]([int]$outputs['2K']['crf'] + 5)
-    $outputs['2K'].Remove('crf')
-    $outputs['2K']['qmin'] = $outputs['2K']['cq']
-    $outputs['2K']['qmax'] = $outputs['2K']['cq']
-    $outputs['2K']['maxrate'] = '12M'
-    $outputs['2K']['bufsize'] = '6M'
-    $outputs['2K']['filter:v']['scale_cuda'] = $outputs['2K']['filter:v']['scale']
-    $outputs['2K']['filter:v'].Remove('scale')
-}
-if ($Auto) {   
-    $outputs['4K']['c:v'] = 'h264_nvenc'
-    $outputs['4K']['cq'] = [string]([int]$outputs['4K']['crf'] + 5)
-    $outputs['4K']['filter:v'].Remove('crf')
-    $outputs['4K']['qmin'] = $outputs['4K']['cq']
-    $outputs['4K']['qmax'] = $outputs['4K']['cq']
-    $outputs['4K']['maxrate'] = '16M'
-    $outputs['4K']['bufsize'] = '8M'
-    $outputs['4K']['filter:v']['scale_cuda'] = $outputs['4K']['filter:v']['scale']
-    $outputs['4K']['filter:v'].Remove('crf')
-    $outputs['4K']['filter:v'].Remove('scale')
-
-    $outputs['6K']['c:v'] = 'hevc_nvenc'
-    $outputs['6K']['cq'] = [string]([int]$outputs['6K']['crf'] + 10)
-    $outputs['6K'].Remove('crf')
-    $outputs['6K']['qmin'] = $outputs['6K']['cq']
-    $outputs['6K']['qmax'] = $outputs['6K']['cq']
-    $outputs['6K']['maxrate'] = '20M'
-    $outputs['6K']['bufsize'] = '10M'
-    $outputs['6K']['filter:v']['scale_cuda'] = $outputs['6K']['filter:v']['scale']
-    $outputs['6K']['filter:v'].Remove('scale')
-    $outputs['6K'].Remove('preset')
-
-    $outputs['8K']['c:v'] = 'hevc_nvenc'
-    $outputs['8K']['cq'] = [string]([int]$outputs['8K']['crf'] + 10)
-    $outputs['8K'].Remove('crf')
-    $outputs['8K']['qmin'] = $outputs['8K']['cq']
-    $outputs['8K']['qmax'] = $outputs['8K']['cq']
-    $outputs['8K']['maxrate'] = '24M'
-    $outputs['8K']['bufsize'] = '12M'
-    $outputs['8K']['filter:v']['scale_cuda'] = $outputs['8K']['filter:v']['scale']
-    $outputs['8K']['filter:v'].Remove('scale')
-    $outputs['8K'].Remove('preset')
 }
 
 # Github releases functions
@@ -385,8 +324,6 @@ function Self-Upgrade ([string]$InputPath) {
         exit
     }
 }
-
-
 Function Analyze-FFMPEG-StdOut($stdout) {
     $output = New-Object PSObject
     $output | Add-Member -MemberType NoteProperty -Name Frame -Value ([string]([regex]::Match($stdout, 'frame=\s*(\d+)')))
@@ -410,6 +347,89 @@ Function Analyze-FFMPEG-StdOut($stdout) {
         $output.Bitrate = $output.Bitrate.Substring(8, $output.Bitrate.Length - 8).Trim()
     }
     return $output
+}
+function Get-FFMPEGExpression($job, $Processor) {
+    $job.PrefixExpression += "-hide_banner "
+    if ($Processor -eq "NVENC") {
+        switch ($job.Parameters['c:v']) {
+            'libx264' { $job.Parameters['c:v'] = 'h264_nvenc'}
+            'libx265' { $job.Parameters['c:v'] = 'hevc_nvenc'}
+        }
+        switch ($job.Paramerters['filter:v']["scale"]) {
+            '3840:1920' { 
+                $job.Parameters['cq'] = [string]([int]$job.Parameters['crf'] + 4)
+                $job.Parameters['maxrate'] = '16M'
+                $job.Parameters['bufsize'] = '8M'
+            }
+            '5760:2880' {
+                $job.Parameters['cq'] = [string]([int]$job.Parameters['crf'] + 9)
+                $job.Parameters['maxrate'] = '20M'
+                $job.Parameters['bufsize'] = '10M'
+            }
+            '7680:3840' {
+                $job.Parameters['cq'] = [string]([int]$job.Parameters['crf'] + 9)
+                $job.Parameters['maxrate'] = '24M'
+                $job.Parameters['bufsize'] = '12M'
+            }
+        }
+        $job.Parameters['qmin'] = $job.Parameters['cq']
+        $job.Parameters['qmax'] = $job.Parameters['cq']
+        $job.Parameters.Remove('crf')
+        $job.Parameters.Remove('preset')
+        $job.PrefixExpression += "-hwaccel cuda "
+        switch ($master.streams[0].codec_name) {
+            hevc { $job.InputExpression += "-c:v hevc_cuvid " }
+            h264 { $job.InputExpression += "-c:v h264_cuvid " }
+        }
+    }
+    $job.InputExpression += "-i '" + $master.FullName + "'"
+    foreach ($para in $job.Parameters.Keys) {
+        if ($job.Parameters[$para] -is [String]) {
+            $job.OutputExpression += " -" + $para + " " + $job.Parameters[$para]
+        }
+        if ($job.Parameters[$para] -is [Hashtable]) {
+            $job.OutputExpression += " -" + $para + " '";
+            foreach ($item in $job.Parameters[$para].Keys) {
+                if ($job.Parameters[$para][$item] -ne '') {
+                    $job.OutputExpression += $item + "=" + $job.Parameters[$para][$item];
+                }
+                else {
+                    $job.OutputExpression += $item;
+                }
+                Switch ($para) {
+                    'filter:v' { $job.OutputExpression += "," }
+                    'x264-params' { $job.OutputExpression += ":" }
+                    'x265-params' { $job.OutputExpression += ":" }
+                }
+            }
+            $job.OutputExpression = $job.OutputExpression.Substring(0, $job.OutputExpression.Length - 1)
+            $job.OutputExpression += "'"
+        }
+    }
+    $output_filepath = $job.Outpath + "\" + $job.Master.BaseName + "_"
+    switch ($job.Paramerters['filter:v']["scale"]) {
+        '3840:1920' { $output_filepath += "4K.mp4" }
+        '5760:2880' { $output_filepath += "6K.mp4" }
+        '7680:3840' { $output_filepath += "8K.mp4" }
+    }
+    if (!(Test-Path $output_filepath)) {
+        $job.OutputExpression += " -n '$output_filepath'"
+    } else {
+        $transcoded = (ffprobe -hide_banner -show_streams -v quiet -print_format json -i  $output_filepath | ConvertFrom-Json).streams
+        if ($transcoded.Length -gt 0) {
+            if ($master.streams[0].duration -ne $transcoded[0].duration) {
+                $job.OutputExpression += " -y '$output_filepath'"
+            }
+            else {
+                $job.OutputExpression = ""
+            }
+        }
+        else {
+            $job.OutputExpression += " -y '$output_filepath'"
+        }
+    }
+    $job.OutputFilePath = $output_filepath
+    return "ffmpeg " + $job.PrefixExpression + " " + $job.InputExpression + " " + $job.OutputExpression
 }
 
 # Scoping
@@ -469,133 +489,69 @@ else {
         }
     }
 
-    if ($NVENC) {
-        $GPU_LIST = ffmpeg -f lavfi -i nullsrc -c:v nvenc -gpu list -f null - 2>&1 | Select-String "GPU \#" | ForEach-Object { [regex]::Matches([string]$_, "\#.*\>").Value }
-    }
-    $GPU_LIST
-    $queue_CPU = [System.Collections.Queue]::Synchronized( (New-Object System.Collections.Queue) )
-    $queue_NVENC = [System.Collections.Queue]::Synchronized( (New-Object System.Collections.Queue) )
+    $JOB_QUEUE = [System.Collections.Queue]::Synchronized( (New-Object System.Collections.Queue) )
     $i = 0
     foreach ($master in $masters) {
-        $master | Add-Member -MemberType NoteProperty -Name streams -Value ((ffprobe -hide_banner -show_streams -v quiet -print_format json -i $master.FullName | ConvertFrom-Json).streams)
-        
-        if ((Split-Path -Path $dir_processed -Parent) -ne ($InputPath)) {
-            $outpath = ([string](Split-Path -Path $master.FullName -Parent)).Replace($InputPath, $dir_processed)
-        }
-        else {
-            $outpath = $dir_processed
-        }
-        if (!(Test-Path $outpath)) {
-            New-Item -ItemType Directory -Force -Path $outpath | Out-Null
-        }
-        foreach ($format_name in ($outputs.Keys | Sort-Object)) {
-            $job = New-Object -TypeName PSObject -Property @{
-                Id               = $i
-                Parameters       = @{}
-                PrefixExpression = ""
-                InputExpression  = ""
-                OutputExpression = ""
-                InputStreams     = $master.streams
-                OutputFilePath   = ""
-                Progress         = @{}
-            }
-            $i++
-            $parameters = @{}
-            foreach ($attr in $defaults.Keys) {
-                $parameters[$attr] = $defaults[$attr]
-            }
-            foreach ($attr in $outputs[$format_name].Keys) {
-                $parameters[$attr] = $outputs[$format_name][$attr]
-            }
-            $job.PrefixExpression += "-hide_banner "
-            if ($parameters['c:v'] -eq "hevc_nvenc" -or $parameters['c:v'] -eq "h264_nvenc") {
-                $job.PrefixExpression += "-hwaccel cuda -hwaccel_output_format cuda "
-                switch ($master.streams[0].codec_name) {
-                    hevc { $job.InputExpression += "-c:v hevc_cuvid " }
-                    h264 { $job.InputExpression += "-c:v h264_cuvid " }
-                }
-            }
+    	try {
+            $master | Add-Member -MemberType NoteProperty -Name InputStreams -Value ((ffprobe -hide_banner -show_streams -v quiet -print_format json -i $master.FullName | ConvertFrom-Json).streams)
             
-            $job.InputExpression += "-i '" + $master.FullName + "'"
-
-            $output_expression = ""
-            foreach ($para in $parameters.Keys) {
-                if ($parameters[$para] -is [String]) {
-                    $output_expression += " -" + $para + " " + $parameters[$para]
-                }
-                if ($parameters[$para] -is [Hashtable]) {
-                    $output_expression += " -" + $para + " '";
-                    foreach ($item in $parameters[$para].Keys) {
-                        if ($parameters[$para][$item] -ne '') {
-                            $output_expression += $item + "=" + $parameters[$para][$item];
-                        }
-                        else {
-                            $output_expression += $item;
-                        }
-                        Switch ($para) {
-                            'filter:v' { $output_expression += "," }
-                            'x264-params' { $output_expression += ":" }
-                            'x265-params' { $output_expression += ":" }
-                        }
-                    }
-                    $output_expression = $output_expression.Substring(0, $output_expression.Length - 1)
-                    $output_expression += "'"
-                }
+            if ((Split-Path -Path $dir_processed -Parent) -ne ($InputPath)) {
+                $outpath = ([string](Split-Path -Path $master.FullName -Parent)).Replace($InputPath, $dir_processed)
+            } else {
+                $outpath = $dir_processed
             }
-            $job.Parameters = $parameters
-            $output_filepath = $outpath + "\" + $master.BaseName + "_" + $format_name + ".mp4"
-            $job.OutputFilePath = $output_filepath
-            if (!(Test-Path $output_filepath)) {
-                $output_expression += " -n '$output_filepath'"
+            if (!(Test-Path $outpath)) {
+                New-Item -ItemType Directory -Force -Path $outpath | Out-Null
             }
-            else {
-                $transcoded = (ffprobe -hide_banner -show_streams -v quiet -print_format json -i  $output_filepath | ConvertFrom-Json).streams
-                if ($transcoded.Length -gt 0) {
-                    if ($master.streams[0].duration -ne $transcoded[0].duration) {
-                        $output_expression += " -y '$output_filepath'"
-                    }
-                    else {
-                        $output_expression = ""
-                    }
+            foreach ($format_name in ($outputs.Keys | Sort-Object)) {
+                $job = New-Object -TypeName PSObject -Property @{
+                    Id               = $i
+                    Parameters       = @{}
+                    Master           = $master
+                    Output           = $outpath
+                    OutputFilePath   = ""
+                    PrefixExpression = ""
+                    InputExpression  = ""
+                    OutputExpression = ""
+                    Progress         = @{}
                 }
-                else {
-                    $output_expression += " -y '$output_filepath'"
+                $i++
+                foreach ($attr in $defaults.Keys) {
+                    $job.Parameters[$attr] = $defaults[$attr]
                 }
+                foreach ($attr in $outputs[$format_name].Keys) {
+                    $job.Parameters[$attr] = $outputs[$format_name][$attr]
+                }
+                $JOB_QUEUE.Enqueue($job)
             }
-            if (-not [string]::IsNullOrEmpty($output_expression)) {
-                $job.OutputExpression = $output_expression
-                if ($parameters['c:v'] -eq "hevc_nvenc" -or $parameters['c:v'] -eq "h264_nvenc") {
-                    $queue_NVENC.Enqueue($job)
-                }
-                else {
-                    $queue_CPU.Enqueue($job)
-                }
-            }
+        } catch {
+        	Write-Host $_
+            Write-Host "An error occured adding the following file to the job queue:"
+            $master
         }
     }
     
     $TotalFrames = 0
-    $batch = $queue_CPU.ToArray() + $queue_NVENC.ToArray()
-    $batch | ForEach-Object { 
-        $TotalFrames += [int]$_.InputStreams[0].nb_frames
+    $batch = $JOB_QUEUE.ToArray()
+    $batch | ForEach-Object {
+        #$fullExpression = "ffmpeg " + $_.PrefixExpression + " " + $_.InputExpression + " " + $_.OutputExpression
+        #Write-Host $fullExpression
+        $TotalFrames += [int]$_.Master.InputStreams[0].nb_frames
     }
     Write-Progress -Activity "Transcoding Jobs" -Id 1
-    While (($queue_CPU.Count -gt 0 -or $queue_NVENC.Count -gt 0) -or (Get-Job).Count -ne (Get-Job | Where-Object -Property State -EQ 'Completed').Count) {
+    While (($JOB_QUEUE.Count -gt 0) -or (Get-Job).Count -ne (Get-Job | Where-Object -Property State -EQ 'Completed').Count) {
         $RunningJobs = Get-Job | Where-Object -Property State -EQ 'Running'
-        if ($queue_CPU.Count -gt 0 -and ($RunningJobs | Where-Object -Property ProcessorType -EQ 'CPU').Count -lt $ConcurrentJobCount_CPU) {
-            $data = $queue_CPU.Dequeue()
-            $job = Start-Job -ArgumentList @($ffmpeg_install_path, $data) -ScriptBlock {
-                Set-Alias ffmpeg $arg[0]
-                Invoke-Expression("ffmpeg " + $args[1].PrefixExpression + " " + $args[1].InputExpression + " " + $args[1].OutputExpression)
-            }
-            $job | Add-Member -MemberType NoteProperty -Name ProcessorType -Value 'CPU'
-            $batch | Where-Object -Property Id -EQ $data.Id | Add-Member -MemberType NoteProperty -Name JobId -Value $job.Id
+        if ($CPU_ENABLED -and ($RunningJobs | Where-Object -Property ProcessorType -EQ 'CPU').Count -lt $ConcurrentJobCount_CPU) {
+            $data = $JOB_QUEUE.Dequeue()
+            $ID = $data.Id
+            $batch | Where-Object -Property Id -EQ $ID
         }
-        if ($queue_NVENC.Count -gt 0 -and ($RunningJobs | Where-Object -Property ProcessorType -EQ 'NVENC').Count -lt $ConcurrentJobCount_NVENC) {
-            $data = $queue_NVENC.Dequeue()
-            $job = Start-Job -ArgumentList @($ffmpeg_install_path, $data) -ScriptBlock {
+        if ($NVENC_ENABLED -and ($RunningJobs | Where-Object -Property ProcessorType -EQ 'NVENC').Count -lt $ConcurrentJobCount_NVENC) {
+            $data = $JOB_QUEUE.Dequeue()
+            $expression = Get-FFMPEGExpression(($batch | Where-Object -Property Id -EQ $data.Id), "NVENC")
+            $job = Start-Job -ArgumentList @($ffmpeg_install_path, $expression) -ScriptBlock {
                 Set-Alias ffmpeg $arg[0]
-                Invoke-Expression("ffmpeg " + $args[1].PrefixExpression + " " + $args[1].InputExpression + " " + $args[1].OutputExpression)
+                Invoke-Expression($arg[1])
             }
             $job | Add-Member -MemberType NoteProperty -Name ProcessorType -Value 'NVENC'
             $batch | Where-Object -Property Id -EQ $data.Id | Add-Member -MemberType NoteProperty -Name JobId -Value $job.Id
@@ -608,10 +564,10 @@ else {
                 $stdout = (Receive-Job -Job $_ 2>&1)
                 if (-not [string]::IsNullOrEmpty($stdout)) {
                     $data.Progress = Analyze-FFMPEG-StdOut($stdout)
-                    $completed = [math]::Round(([decimal]$data.Progress.Frame / [decimal]$data.InputStreams[0].nb_frames) * 100, 2)
-                    $speed = [math]::Round([decimal]$data.Progress.FPS / (Invoke-Expression $data.InputStreams[0].avg_frame_rate), 2)
+                    $completed = [math]::Round(([decimal]$data.Progress.Frame / [decimal]$data.Master.InputStreams[0].nb_frames) * 100, 2)
+                    $speed = [math]::Round([decimal]$data.Progress.FPS / (Invoke-Expression $data.Master.InputStreams[0].avg_frame_rate), 2)
                     if ([int]$data.Progress.FPS -gt 0) {
-                        $RemainingTime = [timespan]::FromSeconds(([int]$data.InputStreams[0].nb_frames - [int]$data.Progress.Frame) / [int]$data.Progress.FPS)
+                        $RemainingTime = [timespan]::FromSeconds(([int]$data.Master.InputStreams[0].nb_frames - [int]$data.Progress.Frame) / [int]$data.Progress.FPS)
                     }
                     else {
                         $RemainingTime = [timespan]::FromSeconds(0)
@@ -620,7 +576,7 @@ else {
                     Write-Progress `
                         -Activity $activity `
                         -Status ( `
-                            "Frame: " + $data.Progress.Frame + "/" + $data.InputStreams[0].nb_frames + `
+                            "Frame: " + $data.Progress.Frame + "/" + $data.Master.InputStreams[0].nb_frames + `
                             " | FPS: " + $data.Progress.FPS + `
                             " | Size: " + $data.Progress.Size + `
                             " | Bitrate: " + $data.Progress.Bitrate + `
@@ -633,10 +589,9 @@ else {
                 }
                 $TotalFPS += [int]$data.Progress.FPS
                 $CompletedFrames += [int]$data.Progress.Frame
-            }
-            if ($_.State -eq 'Completed') {
-                Write-Progress -Activity $data.OutputFilePath -Completed -Id ($data.Id + 2) -ParentId 1
-                $CompletedFrames += [int]$data.InputStreams[0].nb_frames
+            } elseif ($_.State -eq 'Completed') {
+                Write-Progress -Activity "Done" -Completed -Id ($data.Id + 2) -ParentId 1
+                Remove-Job -Id $data.JobId
             }
         }
         Write-Progress `
