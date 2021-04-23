@@ -3,20 +3,6 @@ param(
     [switch]$Auto = $false,
     [switch]$NVENC = $false
 )
-$ConcurrentJobCount_CPU = 1
-$CPU_ENABLED = $true
-if ($Auto) {
-    $GPU_LIST = ffmpeg -f lavfi -i nullsrc -c:v nvenc -gpu list -f null - 2>&1 | Select-String "GPU \#" | ForEach-Object { [regex]::Matches([string]$_, "\#.*\>").Value }
-    if ($GPU_LIST.Count -gt 0) {
-        $NVENC_ENABLED = $true
-    }
-    $ConcurrentJobCount_NVENC = $GPU_LIST.Count
-}
-if ($NVENC) {
-    $CPU_ENABLED = $false
-    $NVENC_ENABLED = $true
-}
-
 $defaults = @{
     'c:a'      = 'aac';
     'b:a'      = '317k';
@@ -348,88 +334,94 @@ Function Analyze-FFMPEG-StdOut($stdout) {
     }
     return $output
 }
-function Get-FFMPEGExpression($job, $Processor) {
-    $job.PrefixExpression += "-hide_banner "
-    if ($Processor -eq "NVENC") {
-        switch ($job.Parameters['c:v']) {
-            'libx264' { $job.Parameters['c:v'] = 'h264_nvenc'}
-            'libx265' { $job.Parameters['c:v'] = 'hevc_nvenc'}
+function Get-FFMPEGExpression {
+    Param(
+        [Parameter(ValueFromPipeline, Mandatory = $true)] $Job,
+        [Parameter(Mandatory = $false)] [string] $Coprocessor
+    )
+    $Job.PrefixExpression += "-hide_banner "
+    
+    if ($Coprocessor -eq "NVENC") {
+        switch ($Job.Parameters['c:v']) {
+            'libx264' { $Job.Parameters['c:v'] = 'h264_nvenc'}
+            'libx265' { $Job.Parameters['c:v'] = 'hevc_nvenc'}
         }
-        switch ($job.Paramerters['filter:v']["scale"]) {
+        switch ($Job.Parameters['filter:v']["scale"]) {
             '3840:1920' { 
-                $job.Parameters['cq'] = [string]([int]$job.Parameters['crf'] + 4)
-                $job.Parameters['maxrate'] = '16M'
-                $job.Parameters['bufsize'] = '8M'
+                $Job.Parameters['cq'] = [string]([int]$Job.Parameters['crf'] + 4)
+                $Job.Parameters['maxrate'] = '16M'
+                $Job.Parameters['bufsize'] = '8M'
             }
             '5760:2880' {
-                $job.Parameters['cq'] = [string]([int]$job.Parameters['crf'] + 9)
-                $job.Parameters['maxrate'] = '20M'
-                $job.Parameters['bufsize'] = '10M'
+                $Job.Parameters['cq'] = [string]([int]$Job.Parameters['crf'] + 9)
+                $Job.Parameters['maxrate'] = '20M'
+                $Job.Parameters['bufsize'] = '10M'
             }
             '7680:3840' {
-                $job.Parameters['cq'] = [string]([int]$job.Parameters['crf'] + 9)
-                $job.Parameters['maxrate'] = '24M'
-                $job.Parameters['bufsize'] = '12M'
+                $Job.Parameters['cq'] = [string]([int]$Job.Parameters['crf'] + 9)
+                $Job.Parameters['maxrate'] = '24M'
+                $Job.Parameters['bufsize'] = '12M'
             }
         }
-        $job.Parameters['qmin'] = $job.Parameters['cq']
-        $job.Parameters['qmax'] = $job.Parameters['cq']
-        $job.Parameters.Remove('crf')
-        $job.Parameters.Remove('preset')
-        $job.PrefixExpression += "-hwaccel cuda "
-        switch ($master.streams[0].codec_name) {
-            hevc { $job.InputExpression += "-c:v hevc_cuvid " }
-            h264 { $job.InputExpression += "-c:v h264_cuvid " }
+        $Job.Parameters['qmin'] = $Job.Parameters['cq']
+        $Job.Parameters['qmax'] = $Job.Parameters['cq']
+        $Job.Parameters.Remove('crf')
+        $Job.Parameters.Remove('preset')
+        $Job.PrefixExpression += "-hwaccel cuda "
+        switch ($Job.Master.streams[0].codec_name) {
+            hevc { $Job.InputExpression += "-c:v hevc_cuvid " }
+            h264 { $Job.InputExpression += "-c:v h264_cuvid " }
         }
     }
-    $job.InputExpression += "-i '" + $master.FullName + "'"
-    foreach ($para in $job.Parameters.Keys) {
-        if ($job.Parameters[$para] -is [String]) {
-            $job.OutputExpression += " -" + $para + " " + $job.Parameters[$para]
+    $Job.InputExpression += "-i '" + $Job.Master.FullName + "'"
+    foreach ($para in $Job.Parameters.Keys) {
+        if ($Job.Parameters[$para] -is [String]) {
+            $Job.OutputExpression += " -" + $para + " " + $Job.Parameters[$para]
         }
-        if ($job.Parameters[$para] -is [Hashtable]) {
-            $job.OutputExpression += " -" + $para + " '";
-            foreach ($item in $job.Parameters[$para].Keys) {
-                if ($job.Parameters[$para][$item] -ne '') {
-                    $job.OutputExpression += $item + "=" + $job.Parameters[$para][$item];
+        if ($Job.Parameters[$para] -is [Hashtable]) {
+            $Job.OutputExpression += " -" + $para + " '";
+            foreach ($item in $Job.Parameters[$para].Keys) {
+                if ($Job.Parameters[$para][$item] -ne '') {
+                    $Job.OutputExpression += $item + "=" + $Job.Parameters[$para][$item];
                 }
                 else {
-                    $job.OutputExpression += $item;
+                    $Job.OutputExpression += $item;
                 }
                 Switch ($para) {
-                    'filter:v' { $job.OutputExpression += "," }
-                    'x264-params' { $job.OutputExpression += ":" }
-                    'x265-params' { $job.OutputExpression += ":" }
+                    'filter:v' { $Job.OutputExpression += "," }
+                    'x264-params' { $Job.OutputExpression += ":" }
+                    'x265-params' { $Job.OutputExpression += ":" }
                 }
             }
-            $job.OutputExpression = $job.OutputExpression.Substring(0, $job.OutputExpression.Length - 1)
-            $job.OutputExpression += "'"
+            $Job.OutputExpression = $Job.OutputExpression.Substring(0, $Job.OutputExpression.Length - 1)
+            $Job.OutputExpression += "'"
         }
     }
-    $output_filepath = $job.Outpath + "\" + $job.Master.BaseName + "_"
-    switch ($job.Paramerters['filter:v']["scale"]) {
+    $output_filepath = $Job.Outpath + "\" + $Job.Master.BaseName + "_"
+    switch ($Job.Parameters['filter:v']["scale"]) {
         '3840:1920' { $output_filepath += "4K.mp4" }
         '5760:2880' { $output_filepath += "6K.mp4" }
         '7680:3840' { $output_filepath += "8K.mp4" }
     }
     if (!(Test-Path $output_filepath)) {
-        $job.OutputExpression += " -n '$output_filepath'"
+        $Job.OutputExpression += " -n '$output_filepath'"
     } else {
-        $transcoded = (ffprobe -hide_banner -show_streams -v quiet -print_format json -i  $output_filepath | ConvertFrom-Json).streams
+        $transcoded = (ffprobe -hide_banner -show_streams -v quiet -print_format json -i $output_filepath | ConvertFrom-Json).streams
         if ($transcoded.Length -gt 0) {
-            if ($master.streams[0].duration -ne $transcoded[0].duration) {
-                $job.OutputExpression += " -y '$output_filepath'"
+            if ($Job.Master.streams[0].duration -ne $transcoded[0].duration) {
+                $Job.OutputExpression += " -y '$output_filepath'"
             }
             else {
-                $job.OutputExpression = ""
+                $Job.OutputExpression = ""
             }
         }
         else {
-            $job.OutputExpression += " -y '$output_filepath'"
+            $Job.OutputExpression += " -y '$output_filepath'"
         }
     }
-    $job.OutputFilePath = $output_filepath
-    return "ffmpeg " + $job.PrefixExpression + " " + $job.InputExpression + " " + $job.OutputExpression
+    $Job.OutputFilePath = $output_filepath
+    
+    return $Job.PrefixExpression + " " + $Job.InputExpression + " " + $Job.OutputExpression
 }
 
 # Scoping
@@ -479,6 +471,25 @@ else {
     Set-Alias ffmpeg $ffmpeg_install_path
     Set-Alias ffprobe $ffprobe_install_path
 
+    $ConcurrentJobCount_CPU = 1
+    $CPU_ENABLED = $true
+    if ($Auto) {
+        $GPU_LIST = ffmpeg -f lavfi -i nullsrc -c:v nvenc -gpu list -f null - 2>&1 | Select-String "GPU \#" | ForEach-Object { [regex]::Matches([string]$_, "\#.*\>").Value }
+        if ($GPU_LIST.Count -gt 0) {
+            $NVENC_ENABLED = $true
+        }
+        $ConcurrentJobCount_NVENC = $GPU_LIST.Count
+    }
+    if ($NVENC) {
+        $GPU_LIST = ffmpeg -f lavfi -i nullsrc -c:v nvenc -gpu list -f null - 2>&1 | Select-String "GPU \#" | ForEach-Object { [regex]::Matches([string]$_, "\#.*\>").Value }
+        if ($GPU_LIST.Count -eq 0) {
+            Write-Error "No NVIDIA GPUs detected."
+            exit
+        }
+        $CPU_ENABLED = $false
+        $NVENC_ENABLED = $true
+    }
+
     $masters = Get-ChildItem -Path $InputPath -Filter "*.mp4"
     $dir_processed = "$InputPath\Processed"
     if ($masters.Length -eq 0) {
@@ -504,16 +515,17 @@ else {
                 New-Item -ItemType Directory -Force -Path $outpath | Out-Null
             }
             foreach ($format_name in ($outputs.Keys | Sort-Object)) {
-                $job = New-Object -TypeName PSObject -Property @{
+                $job = @{
                     Id               = $i
+                    JobId            = 0
                     Parameters       = @{}
                     Master           = $master
-                    Output           = $outpath
-                    OutputFilePath   = ""
+                    Outpath          = $outpath
+                    Progress         = @{}
                     PrefixExpression = ""
                     InputExpression  = ""
                     OutputExpression = ""
-                    Progress         = @{}
+                    OutputFilePath   = ""
                 }
                 $i++
                 foreach ($attr in $defaults.Keys) {
@@ -526,16 +538,12 @@ else {
             }
         } catch {
         	Write-Host $_
-            Write-Host "An error occured adding the following file to the job queue:"
-            $master
+            Write-Host "An error occured adding the following file to the job queue:" $master.FullName
         }
     }
     
     $TotalFrames = 0
-    $batch = $JOB_QUEUE.ToArray()
-    $batch | ForEach-Object {
-        #$fullExpression = "ffmpeg " + $_.PrefixExpression + " " + $_.InputExpression + " " + $_.OutputExpression
-        #Write-Host $fullExpression
+    $JOB_QUEUE.ToArray() | ForEach-Object {
         $TotalFrames += [int]$_.Master.InputStreams[0].nb_frames
     }
     Write-Progress -Activity "Transcoding Jobs" -Id 1
@@ -543,55 +551,50 @@ else {
         $RunningJobs = Get-Job | Where-Object -Property State -EQ 'Running'
         if ($CPU_ENABLED -and ($RunningJobs | Where-Object -Property ProcessorType -EQ 'CPU').Count -lt $ConcurrentJobCount_CPU) {
             $data = $JOB_QUEUE.Dequeue()
-            $ID = $data.Id
-            $batch | Where-Object -Property Id -EQ $ID
+            $expression = $data | Get-FFMPEGExpression
+            $job = Start-Job -ArgumentList @($ffmpeg_install_path, $expression) -ScriptBlock {Invoke-Expression($args[0] + " " + $args[1])}
+            $job | Add-Member -MemberType NoteProperty -Name ProcessorType -Value 'CPU'
+            $job | Add-Member -MemberType NoteProperty -Name FFMPEGParameters -Value $data
         }
         if ($NVENC_ENABLED -and ($RunningJobs | Where-Object -Property ProcessorType -EQ 'NVENC').Count -lt $ConcurrentJobCount_NVENC) {
             $data = $JOB_QUEUE.Dequeue()
-            $expression = Get-FFMPEGExpression(($batch | Where-Object -Property Id -EQ $data.Id), "NVENC")
-            $job = Start-Job -ArgumentList @($ffmpeg_install_path, $expression) -ScriptBlock {
-                Set-Alias ffmpeg $arg[0]
-                Invoke-Expression($arg[1])
-            }
+            $expression = $data | Get-FFMPEGExpression -Coprocessor "NVENC"
+            $job = Start-Job -ArgumentList @($ffmpeg_install_path, $expression) -ScriptBlock {Invoke-Expression($args[0] + " " + $args[1])}
             $job | Add-Member -MemberType NoteProperty -Name ProcessorType -Value 'NVENC'
-            $batch | Where-Object -Property Id -EQ $data.Id | Add-Member -MemberType NoteProperty -Name JobId -Value $job.Id
+            $job | Add-Member -MemberType NoteProperty -Name FFMPEGParameters -Value $data
         }
         $TotalFPS = 0
         $CompletedFrames = 0
         Get-Job | ForEach-Object {
-            $data = $batch | Where-Object -Property JobID -EQ $_.Id
             if ($_.State -eq 'Running') {
                 $stdout = (Receive-Job -Job $_ 2>&1)
                 if (-not [string]::IsNullOrEmpty($stdout)) {
-                    $data.Progress = Analyze-FFMPEG-StdOut($stdout)
-                    $completed = [math]::Round(([decimal]$data.Progress.Frame / [decimal]$data.Master.InputStreams[0].nb_frames) * 100, 2)
-                    $speed = [math]::Round([decimal]$data.Progress.FPS / (Invoke-Expression $data.Master.InputStreams[0].avg_frame_rate), 2)
-                    if ([int]$data.Progress.FPS -gt 0) {
-                        $RemainingTime = [timespan]::FromSeconds(([int]$data.Master.InputStreams[0].nb_frames - [int]$data.Progress.Frame) / [int]$data.Progress.FPS)
+                    $_.FFMPEGParameters.Progress = Analyze-FFMPEG-StdOut($stdout)
+                    $completed = [math]::Round(([decimal]$_.FFMPEGParameters.Progress.Frame / [decimal]$_.FFMPEGParameters.Master.InputStreams[0].nb_frames) * 100, 2)
+                    $speed = [math]::Round([decimal]$_.FFMPEGParameters.Progress.FPS / (Invoke-Expression $_.FFMPEGParameters.Master.InputStreams[0].avg_frame_rate), 2)
+                    if ([int]$_.FFMPEGParameters.Progress.FPS -gt 0) {
+                        $RemainingTime = [timespan]::FromSeconds(([int]$_.FFMPEGParameters.Master.InputStreams[0].nb_frames - [int]$_.FFMPEGParameters.Progress.Frame) / [int]$_.FFMPEGParameters.Progress.FPS)
                     }
                     else {
                         $RemainingTime = [timespan]::FromSeconds(0)
                     }
-                    $activity = $_.ProcessorType + ": " + $data.OutputFilePath
+                    $activity = $_.ProcessorType + ": " + $_.FFMPEGParameters.OutputFilePath
                     Write-Progress `
                         -Activity $activity `
                         -Status ( `
-                            "Frame: " + $data.Progress.Frame + "/" + $data.Master.InputStreams[0].nb_frames + `
-                            " | FPS: " + $data.Progress.FPS + `
-                            " | Size: " + $data.Progress.Size + `
-                            " | Bitrate: " + $data.Progress.Bitrate + `
+                            "Frame: " + $_.FFMPEGParameters.Progress.Frame + "/" + $_.FFMPEGParameters.Master.InputStreams[0].nb_frames + `
+                            " | FPS: " + $_.FFMPEGParameters.Progress.FPS + `
+                            " | Size: " + $_.FFMPEGParameters.Progress.Size + `
+                            " | Bitrate: " + $_.FFMPEGParameters.Progress.Bitrate + `
                             " | Speed: " + $speed + "x" + `
                             " | Remaining: " + ("{0:hh\:mm\:ss\,fff}" -f $RemainingTime) `
                     ) `
                         -PercentComplete $completed `
-                        -Id ($data.Id + 2) `
+                        -Id ($_.Id + 2) `
                         -ParentId 1
                 }
-                $TotalFPS += [int]$data.Progress.FPS
-                $CompletedFrames += [int]$data.Progress.Frame
-            } elseif ($_.State -eq 'Completed') {
-                Write-Progress -Activity "Done" -Completed -Id ($data.Id + 2) -ParentId 1
-                Remove-Job -Id $data.JobId
+                $TotalFPS += [int]$_.FFMPEGParameters.Progress.FPS
+                $CompletedFrames += [int]$_.FFMPEGParameters.Progress.Frame
             }
         }
         Write-Progress `
