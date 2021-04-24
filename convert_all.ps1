@@ -1,6 +1,7 @@
 param(
     [string]$InputPath,
     [switch]$Auto = $false,
+    [switch]$AMF = $false,
     [switch]$NVENC = $false
 )
 $defaults = @{
@@ -187,13 +188,14 @@ Function Get-Folder($initialDirectory = "") {
 
 Function Install-7zip($7zip_install_path = "") {
     if (!(Test-Path $7zip_install_path)) {
+        $scope = Get-ScriptScope
         $7zip_download_uri = "https://www.7-zip.org/a/7z1900-x64.msi"
         $7zip_local_file = Join-Path -Path $([System.IO.Path]::GetTempPath()) -ChildPath $(Split-Path -Path $7zip_download_uri -Leaf)
         Invoke-WebRequest -Uri $7zip_download_uri -Out $7zip_local_file
         $MSIArguments = @(
             "/a"
             ('"{0}"' -f $7zip_local_file)
-            "TARGETDIR=`"$dir_scope`""
+            "TARGETDIR=`"$scope['dir']`""
             "/qn"
         )
         Start-Process "msiexec.exe" -ArgumentList $MSIArguments -Wait -NoNewWindow 
@@ -214,17 +216,10 @@ Function Install-FFMpeg($ffmpeg_install_path = "") {
     $ffmpeg_install_path += "\" + $ffmpeg_release_version + "\bin\ffmpeg.exe"
 }
 Function Install-ContextMenus() {
-    $dir_scope = "$env:APPDATA\Eclatech"
-    if (!(Test-Path $dir_scope)) {
-        New-Item -ItemType Directory -Force -Path $dir_scope | Out-Null
-    }
-    $reg_scope = "HKCU:\SOFTWARE\Eclatech"
-    if (!(Test-Path $reg_scope)) {
-        New-Item -Path "HKCU:\SOFTWARE" -Name "Eclatech" | Out-Null
-    }
+    $scope = Get-ScriptScope
     
     # Script placement
-    $self_install_path = "$dir_scope\Scripts"
+    $self_install_path = $scope['dir']+"\Scripts"
     $self_install_path += "\"
     $self_path = New-Object System.IO.FileInfo($PSCommandPath)
     $self_install_path += $self_path.BaseName
@@ -253,7 +248,7 @@ Function Install-ContextMenus() {
     if (Test-Path $reg_context_ffmpeg_shell_all) {
         Remove-Item -Path $reg_context_ffmpeg_shell_all -Recurse -Force
     }
-
+    # CPU Entry
     $reg_context_ffmpeg_shell_all_cpu = "$reg_context_ffmpeg_shell\all_cpu"
     if (!(Test-Path $reg_context_ffmpeg_shell_all_cpu)) {
         New-Item -Path $reg_context_ffmpeg_shell_all_cpu | Out-Null
@@ -266,7 +261,7 @@ Function Install-ContextMenus() {
         New-Item -Path $reg_context_ffmpeg_shell_all_cpu_command | Out-Null
     }
     Set-ItemProperty -Path $reg_context_ffmpeg_shell_all_cpu_command -Name "(Default)" -Value "PowerShell.exe -ExecutionPolicy Bypass -NoExit -Command `"& '$self_install_path' -InputPath '%v'`""
-    
+    # NVENC Entry
     $reg_context_ffmpeg_shell_all_gpu = "$reg_context_ffmpeg_shell\all_gpu"
     if (!(Test-Path $reg_context_ffmpeg_shell_all_gpu)) {
         New-Item -Path $reg_context_ffmpeg_shell_all_gpu | Out-Null
@@ -279,7 +274,7 @@ Function Install-ContextMenus() {
         New-Item -Path $reg_context_ffmpeg_shell_all_gpu_command | Out-Null
     }
     Set-ItemProperty -Path $reg_context_ffmpeg_shell_all_gpu_command -Name "(Default)" -Value "PowerShell.exe -ExecutionPolicy Bypass -NoExit -Command `"& '$self_install_path' -InputPath '%v' -NVENC`""
-
+    # Auto Entry
     $reg_context_ffmpeg_shell_all_auto = "$reg_context_ffmpeg_shell\all_auto"
     if (!(Test-Path $reg_context_ffmpeg_shell_all_auto)) {
         New-Item -Path $reg_context_ffmpeg_shell_all_auto | Out-Null
@@ -292,6 +287,19 @@ Function Install-ContextMenus() {
         New-Item -Path $reg_context_ffmpeg_shell_all_auto_command | Out-Null
     }
     Set-ItemProperty -Path $reg_context_ffmpeg_shell_all_auto_command -Name "(Default)" -Value "PowerShell.exe -ExecutionPolicy Bypass -NoExit -Command `"& '$self_install_path' -InputPath '%v' -Auto`""
+    # AMF Entry
+    $reg_context_ffmpeg_shell_all_amf = "$reg_context_ffmpeg_shell\all_amf"
+    if (!(Test-Path $reg_context_ffmpeg_shell_all_amf)) {
+        New-Item -Path $reg_context_ffmpeg_shell_all_amf | Out-Null
+    }
+    if (!(Get-ItemProperty -Path $reg_context_ffmpeg_shell_all_amf).PSObject.Properties.Name -contains "MUIVerb") {
+        New-ItemProperty -Path $reg_context_ffmpeg_shell_all_amf -Name "MUIVerb" -Value "Convert All MP4s - AMF"
+    }
+    $reg_context_ffmpeg_shell_all_amf_command = "$reg_context_ffmpeg_shell_all_amf\command"
+    if (!(Test-Path $reg_context_ffmpeg_shell_all_amf_command)) {
+        New-Item -Path $reg_context_ffmpeg_shell_all_amf_command | Out-Null
+    }
+    Set-ItemProperty -Path $reg_context_ffmpeg_shell_all_amf_command -Name "(Default)" -Value "PowerShell.exe -ExecutionPolicy Bypass -NoExit -Command `"& '$self_install_path' -InputPath '%v' -AMF`""
 }
 function Self-Upgrade ([string]$InputPath) {
     Install-ContextMenus
@@ -311,6 +319,7 @@ function Self-Upgrade ([string]$InputPath) {
     }
 }
 Function Analyze-FFMPEG-StdOut($stdout) {
+    Write-Host $stdout
     $output = New-Object PSObject
     $output | Add-Member -MemberType NoteProperty -Name Frame -Value ([string]([regex]::Match($stdout, 'frame=\s*(\d+)')))
     if ($output.Frame.Length -gt 0) {
@@ -334,12 +343,93 @@ Function Analyze-FFMPEG-StdOut($stdout) {
     }
     return $output
 }
+function Get-ScriptScope {
+    $dir = "$env:APPDATA\Eclatech"
+    if (!(Test-Path $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    $reg = "HKCU:\SOFTWARE\Eclatech"
+    if (!(Test-Path $reg)) {
+        New-Item -Path "HKCU:\SOFTWARE" -Name "Eclatech" | Out-Null
+    }
+    return @{'dir' = $dir; 'reg' = $reg}
+}
+function Set-FFMPEGAlias {
+    $scope = Get-ScriptScope
+    $ffmpeg_install_path = $scope['dir']+"\Files\ffmpeg"
+    $ffmpeg_installed_versions = Get-ChildItem -Path $ffmpeg_install_path
+    $ffprobe_install_path = $ffmpeg_install_path + "\" + ($ffmpeg_installed_versions | Sort-Object -Property "LastWriteTime" -Descending)[0].Name + "\bin\ffprobe.exe"
+    $ffmpeg_install_path += "\" + ($ffmpeg_installed_versions | Sort-Object -Property "LastWriteTime" -Descending)[0].Name + "\bin\ffmpeg.exe"
+    Set-Alias -Scope Global -Name ffmpeg -Value $ffmpeg_install_path
+    Set-Alias -Scope Global -Name ffprobe -Value $ffprobe_install_path
+}
+function Get-FFMPEGMaxJobs {
+    Param(
+        [Parameter(Mandatory = $true)] [string] $Coprocessor
+    )
+    switch ($Coprocessor.ToUpper()) {
+        'CPU' {
+            return 1
+        }
+        'NVENC' {
+            $NVENC_LIST = ffmpeg -f lavfi -i nullsrc -c:v nvenc -gpu list -f null - 2>&1 | Select-String "GPU \#" | ForEach-Object { [regex]::Matches([string]$_, "\#.*\>").Value }
+            return $NVENC_LIST.Count
+        }
+        'AMF' {
+            $OPENCL_LIST = ffmpeg -v verbose -init_hw_device opencl 2>&1 | Select-String "AMD" | ForEach-Object { 
+                $match = [regex]::Matches([string]$_, "\].*\:").Value
+                $match.Substring(1,$match.Length-2).Trim()
+            }
+            return $OPENCL_LIST.Count
+        }
+    }
+}
 function Get-FFMPEGExpression {
     Param(
         [Parameter(ValueFromPipeline, Mandatory = $true)] $Job,
         [Parameter(Mandatory = $false)] [string] $Coprocessor
     )
     $Job.PrefixExpression += "-hide_banner "
+    $output_filepath = $Job.Outpath + "\" + $Job.Master.BaseName + "_"
+    switch ($Job.Parameters['filter:v']["scale"]) {
+        '3840:1920' { $output_filepath += "4K.mp4" }
+        '5760:2880' { $output_filepath += "6K.mp4" }
+        '7680:3840' { $output_filepath += "8K.mp4" }
+    }
+
+    if ($Coprocessor -eq "AMF") {
+        switch ($Job.Parameters['c:v']) {
+            'libx264' { $Job.Parameters['c:v'] = 'h264_amf'}
+            'libx265' { $Job.Parameters['c:v'] = 'hevc_amf'}
+        }
+        switch ($Job.Parameters['filter:v']["scale"]) {
+            '3840:1920' { 
+                $Job.Parameters['cq'] = [string]([int]$Job.Parameters['crf'] + 4)
+                $Job.Parameters['maxrate'] = '16M'
+                $Job.Parameters['bufsize'] = '8M'
+            }
+            '5760:2880' {
+                $Job.Parameters['cq'] = [string]([int]$Job.Parameters['crf'] + 9)
+                $Job.Parameters['maxrate'] = '20M'
+                $Job.Parameters['bufsize'] = '10M'
+            }
+            '7680:3840' {
+                $Job.Parameters['cq'] = [string]([int]$Job.Parameters['crf'] + 9)
+                $Job.Parameters['maxrate'] = '24M'
+                $Job.Parameters['bufsize'] = '12M'
+            }
+        }
+        $Job.Parameters['filter:v'] = @{
+            "hwmap" = "derive_device=opencl:mode=read,format=nv12"
+            "hwdownload" = ""
+        }
+        $Job.Parameters['qmin'] = $Job.Parameters['cq']
+        $Job.Parameters['qmax'] = $Job.Parameters['cq']
+        $Job.Parameters.Remove('crf')
+        $Job.Parameters.Remove('preset')
+        $Job.PrefixExpression += "-hwaccel d3d11va "
+        $Job.PrefixExpression += "-hwaccel_output_format d3d11 "
+    }
     
     if ($Coprocessor -eq "NVENC") {
         switch ($Job.Parameters['c:v']) {
@@ -397,12 +487,6 @@ function Get-FFMPEGExpression {
             $Job.OutputExpression += "'"
         }
     }
-    $output_filepath = $Job.Outpath + "\" + $Job.Master.BaseName + "_"
-    switch ($Job.Parameters['filter:v']["scale"]) {
-        '3840:1920' { $output_filepath += "4K.mp4" }
-        '5760:2880' { $output_filepath += "6K.mp4" }
-        '7680:3840' { $output_filepath += "8K.mp4" }
-    }
     if (!(Test-Path $output_filepath)) {
         $Job.OutputExpression += " -n '$output_filepath'"
     } else {
@@ -424,25 +508,18 @@ function Get-FFMPEGExpression {
     return $Job.PrefixExpression + " " + $Job.InputExpression + " " + $Job.OutputExpression
 }
 
-# Scoping
-$dir_scope = "$env:APPDATA\Eclatech"
-if (!(Test-Path $dir_scope)) {
-    New-Item -ItemType Directory -Force -Path $dir_scope | Out-Null
-}
-$reg_scope = "HKCU:\SOFTWARE\Eclatech"
-if (!(Test-Path $reg_scope)) {
-    New-Item -Path "HKCU:\SOFTWARE" -Name "Eclatech" | Out-Null
-}
+$scope = Get-ScriptScope
+Set-FFMPEGAlias
 
 # Self-Install
-if ($PSScriptRoot -ne "$dir_scope\Scripts") {
+if ($PSScriptRoot -ne $scope['dir']+"\Scripts") {
     # 7zip
-    $7zip_install_path = "$dir_scope\Files\7-Zip"
+    $7zip_install_path = $scope['dir']+"\Files\7-Zip"
     Install-7zip($7zip_install_path)
     Set-Alias 7z "$7zip_install_path\7z.exe"
 
     # FFMPEG
-    $ffmpeg_install_path = "$dir_scope\Files\ffmpeg"
+    $ffmpeg_install_path = $scope['dir']+"\Files\ffmpeg"
     Install-FFMpeg($ffmpeg_install_path)
     Set-Alias ffmpeg $ffmpeg_install_path
 
@@ -450,7 +527,7 @@ if ($PSScriptRoot -ne "$dir_scope\Scripts") {
     Install-ContextMenus
 
     # Script placement
-    $self_install_path = "$dir_scope\Scripts"
+    $self_install_path = $scope['dir']+"\Scripts"
     if (!(Test-Path $self_install_path)) {
         New-Item -ItemType Directory -Force -Path $self_install_path | Out-Null
     }
@@ -464,30 +541,25 @@ else {
     }
     Self-Upgrade -InputPath $InputPath
 
-    $ffmpeg_install_path = "$dir_scope\Files\ffmpeg"
-    $ffmpeg_installed_versions = Get-ChildItem -Path $ffmpeg_install_path
-    $ffprobe_install_path = $ffmpeg_install_path + "\" + ($ffmpeg_installed_versions | Sort-Object -Property "LastWriteTime" -Descending)[0].Name + "\bin\ffprobe.exe"
-    $ffmpeg_install_path += "\" + ($ffmpeg_installed_versions | Sort-Object -Property "LastWriteTime" -Descending)[0].Name + "\bin\ffmpeg.exe"
-    Set-Alias ffmpeg $ffmpeg_install_path
-    Set-Alias ffprobe $ffprobe_install_path
-
-    $ConcurrentJobCount_CPU = 1
-    $CPU_ENABLED = $true
+    $ConcurrentJobCount = @{}
     if ($Auto) {
-        $GPU_LIST = ffmpeg -f lavfi -i nullsrc -c:v nvenc -gpu list -f null - 2>&1 | Select-String "GPU \#" | ForEach-Object { [regex]::Matches([string]$_, "\#.*\>").Value }
-        if ($GPU_LIST.Count -gt 0) {
-            $NVENC_ENABLED = $true
+        $ConcurrentJobCount['CPU'] = Get-FFMPEGMaxJobs -Coprocessor CPU
+        $ConcurrentJobCount['NVENC'] = Get-FFMPEGMaxJobs -Coprocessor NVENC
+        $ConcurrentJobCount['AMF'] = Get-FFMPEGMaxJobs -Coprocessor AMF
+        $ConcurrentJobCount.Key | ForEach-Object {
+            if ($ConcurrentJobCount[$_] -eq 0) {
+                $ConcurrentJobCount.Remove($_)
+            }
         }
-        $ConcurrentJobCount_NVENC = $GPU_LIST.Count
+    }
+    if ($AMF) {
+        $ConcurrentJobCount['AMF'] = Get-FFMPEGMaxJobs -Coprocessor AMF
     }
     if ($NVENC) {
-        $GPU_LIST = ffmpeg -f lavfi -i nullsrc -c:v nvenc -gpu list -f null - 2>&1 | Select-String "GPU \#" | ForEach-Object { [regex]::Matches([string]$_, "\#.*\>").Value }
-        if ($GPU_LIST.Count -eq 0) {
-            Write-Error "No NVIDIA GPUs detected."
-            exit
-        }
-        $CPU_ENABLED = $false
-        $NVENC_ENABLED = $true
+        $ConcurrentJobCount['NVENC'] = Get-FFMPEGMaxJobs -Coprocessor NVENC
+    }
+    if ($ConcurrentJobCount.Keys.Count -eq 0) {
+        $ConcurrentJobCount['CPU'] = Get-FFMPEGMaxJobs -Coprocessor CPU
     }
 
     $masters = Get-ChildItem -Path $InputPath -Filter "*.mp4"
@@ -549,19 +621,16 @@ else {
     Write-Progress -Activity "Transcoding Jobs" -Id 1
     While (($JOB_QUEUE.Count -gt 0) -or (Get-Job).Count -ne (Get-Job | Where-Object -Property State -EQ 'Completed').Count) {
         $RunningJobs = Get-Job | Where-Object -Property State -EQ 'Running'
-        if ($CPU_ENABLED -and ($RunningJobs | Where-Object -Property ProcessorType -EQ 'CPU').Count -lt $ConcurrentJobCount_CPU) {
-            $data = $JOB_QUEUE.Dequeue()
-            $expression = $data | Get-FFMPEGExpression
-            $job = Start-Job -ArgumentList @($ffmpeg_install_path, $expression) -ScriptBlock {Invoke-Expression($args[0] + " " + $args[1])}
-            $job | Add-Member -MemberType NoteProperty -Name ProcessorType -Value 'CPU'
-            $job | Add-Member -MemberType NoteProperty -Name FFMPEGParameters -Value $data
-        }
-        if ($NVENC_ENABLED -and ($RunningJobs | Where-Object -Property ProcessorType -EQ 'NVENC').Count -lt $ConcurrentJobCount_NVENC) {
-            $data = $JOB_QUEUE.Dequeue()
-            $expression = $data | Get-FFMPEGExpression -Coprocessor "NVENC"
-            $job = Start-Job -ArgumentList @($ffmpeg_install_path, $expression) -ScriptBlock {Invoke-Expression($args[0] + " " + $args[1])}
-            $job | Add-Member -MemberType NoteProperty -Name ProcessorType -Value 'NVENC'
-            $job | Add-Member -MemberType NoteProperty -Name FFMPEGParameters -Value $data
+        $ConcurrentJobCount.Keys | ForEach-Object {
+            $Coprocessor = $_
+            if (($JOB_QUEUE.Count -gt 0) -and ($RunningJobs | Where-Object -Property ProcessorType -EQ $Coprocessor).Count -lt $ConcurrentJobCount[$Coprocessor]) {
+                $data = $JOB_QUEUE.Dequeue()
+                $expression = $data | Get-FFMPEGExpression -Coprocessor $Coprocessor
+                Write-Host $expression
+                $job = Start-Job -ArgumentList @((Get-Alias ffmpeg).Definition, $expression) -ScriptBlock {Invoke-Expression($args[0] + " " + $args[1])}
+                $job | Add-Member -MemberType NoteProperty -Name ProcessorType -Value $Coprocessor
+                $job | Add-Member -MemberType NoteProperty -Name FFMPEGParameters -Value $data
+            }
         }
         $TotalFPS = 0
         $CompletedFrames = 0
@@ -595,6 +664,13 @@ else {
                 }
                 $TotalFPS += [int]$_.FFMPEGParameters.Progress.FPS
                 $CompletedFrames += [int]$_.FFMPEGParameters.Progress.Frame
+            } elseif ($_.State -eq 'Completed') {
+                Write-Progress `
+                    -Activity "Complete" `
+                    -Completed `
+                    -Id ($_.Id + 2) `
+                    -ParentId 1
+                Remove-Job $_
             }
         }
         Write-Progress `
